@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-db
+  labels:
+    tier: {{ .Release.Name }}-db
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-db
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-db
+    spec:
+      containers:
+      - name: db
+        image: {{ .Values.image.dbImage}}
+        volumeMounts:
+        - name: {{ .Values.volume.name }}
+          mountPath: /var/lib/mysql
+      volumes:
+       - name: {{ .Values.volume.name }}
+         persistentVolumeClaim:
+           claimName: {{ .Release.Name }}-{{ .Values.volume.persistentVolumeClaim.claimName }}

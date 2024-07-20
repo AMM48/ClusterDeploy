@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-client
+  labels:
+    app: {{ .Release.Name }}-bookmark-app
+    tier: {{ .Release.Name }}-frontend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      tier: {{ .Release.Name }}-frontend
+  template:
+    metadata:
+      labels:
+        tier: {{ .Release.Name }}-frontend
+    spec:
+      containers:
+      - name: bookmark-app-client
+        image: {{ .Values.image.appImage }}:{{ .Values.image.clientTag  }}
+        command: {{ .Values.container.command | toJson }}
+        args: {{ .Values.container.args | toJson }}
