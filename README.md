@@ -2,7 +2,9 @@
 
 ## Overview
 
-ClusterDeploy is a comprehensive project designed to showcase Kubernetes environment using K3s, a lightweight Kubernetes distribution. This project integrates various components essential for modern cloud-native applications, including ArgoCD for GitOps, Prometheus for monitoring, Grafana for visualization, and Kubeseal for secure secret management.
+ClusterDeploy is a comprehensive project designed to showcase Kubernetes environment using K3s, a lightweight Kubernetes distribution. This project integrates various components essential for modern cloud-native applications, including ArgoCD for GitOps, Prometheus for monitoring, Grafana for visualization, Traefik Proxy as the Ingress controller, and Kubeseal for secure secret management.
+
+The Ingress resource is configured to use a TLS-Secret for handling HTTPS traffic, ensuring secure communication between clients and the services.
 
 ## Tools
 
