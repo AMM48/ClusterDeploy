@@ -18,4 +18,4 @@ The Ingress resource is configured to use a TLS-Secret for handling HTTPS traffi
 
 ## Architecture
 
-![ClusterDeploy-Diagram](./assets/cluster-deploy.drawio.svg)
+![ClusterDeploy-Diagram](./assets/cluster-deploy.svg)
