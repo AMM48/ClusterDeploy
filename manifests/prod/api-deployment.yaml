@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: prod
+  labels:
+    app: bookmark-app
+    tier: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: api
+  template:
+    metadata:
+      labels:
+        tier: api
+    spec:
+      securityContext:
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        runAsNonRoot: true
+      containers:
+      - name: bookmark-app-api
+        image: wajeeh8/bookmark-app:serverk8s
+        imagePullPolicy: Always
+        securityContext:
+          runAsUser: 33
+          runAsGroup: 33
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - All
+        env:
+        - name: HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: host
+        - name: READ_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: read_host
+        - name: USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_username
+        - name: PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: db_name
+---

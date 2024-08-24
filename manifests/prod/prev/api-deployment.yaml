@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
+  namespace: prod
   labels:
     app: bookmark-app
     tier: api
@@ -15,10 +16,21 @@ spec:
       labels:
         tier: api
     spec:
+      securityContext:
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
       containers:
       - name: bookmark-app-api
         image: wajeeh8/bookmark-app:serverk8s
         imagePullPolicy: Always
+        securityContext:
+          runAsUser: 33
+          runAsGroup: 33
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - All
         env:
         - name: HOST
           valueFrom:

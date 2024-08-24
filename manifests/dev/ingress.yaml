@@ -2,17 +2,18 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ingress
+  namespace: dev
   annotations:
-    #traefik.ingress.kubernetes.io/router.entrypoints: web
-    traefik.ingress.kubernetes.io/redirect-entry-point: websecure
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
+  ingressClassName: nginx
   tls:
   - hosts:
-     - bookmark.com
-     - api.bookmark.com
+     - dev.bookmark.com
+     - apidev.bookmark.com
     secretName: tls-secret
   rules:
-  - host: bookmark.com
+  - host: dev.bookmark.com
     http:
       paths:
       - pathType: Prefix
@@ -22,7 +23,7 @@ spec:
             name: clientsvc
             port:
               number: 80
-  - host: api.bookmark.com
+  - host: apidev.bookmark.com
     http:
       paths:
       - pathType: Prefix
@@ -32,3 +33,4 @@ spec:
             name: apisvc
             port:
               number: 80
+---

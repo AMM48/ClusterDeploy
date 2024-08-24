@@ -1,0 +1,223 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: prod
+  labels:
+    tier: db
+spec:
+  selector:
+    matchLabels:
+      app: db
+  serviceName: dbsvc
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+      initContainers:
+      - name: init-mysql
+        image: mysql:5.7
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - ALL
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: root_password
+        command:
+        - bash
+        - "-c"
+        - |
+          set -ex
+          [[ $HOSTNAME =~ -([0-9]+)$ ]] || exit 1
+          ordinal=${BASH_REMATCH[1]}
+          echo [mysqld] > /mnt/conf.d/server-id.cnf
+          echo server-id=$((100 + $ordinal)) >> /mnt/conf.d/server-id.cnf
+          if [[ $ordinal -eq 0 ]]; then
+            cp /mnt/config-map/primary.cnf /mnt/conf.d/
+          else
+            cp /mnt/config-map/replica.cnf /mnt/conf.d/
+          fi
+        volumeMounts:
+        - name: conf
+          mountPath: /mnt/conf.d
+        - name: config-map
+          mountPath: /mnt/config-map
+      - name: clone-mysql
+        image: gcr.io/google-samples/xtrabackup:1.0
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - ALL
+        command:
+        - bash
+        - "-c"
+        - |
+          set -ex
+          [[ -d /var/lib/mysql/mysql ]] && exit 0
+          [[ `hostname` =~ -([0-9]+)$ ]] || exit 1
+          ordinal=${BASH_REMATCH[1]}
+          [[ $ordinal -eq 0 ]] && exit 0
+          ncat --recv-only db-$(($ordinal-1)).dbsvc 3307 | xbstream -x -C /var/lib/mysql
+          xtrabackup --prepare --target-dir=/var/lib/mysql
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+          subPath: mysql
+        - name: conf
+          mountPath: /etc/mysql/conf.d
+      containers:
+      - name: db
+        image: wajeeh8/mysqlk8s
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - ALL
+        env:
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_username
+        - name: MYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_password
+        ports:
+        - name: db
+          containerPort: 3306
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+          subPath: mysql
+        - name: conf
+          mountPath: /etc/mysql/conf.d
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - "-c"
+            - |
+              mysqladmin ping -u ${MYSQL_ADMIN_USER} -p${MYSQL_ADMIN_PASSWORD}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - bash
+            - "-c"
+            - |
+              mysql -h 127.0.0.1 -u ${MYSQL_ADMIN_USER} -p${MYSQL_ADMIN_PASSWORD} -e "SELECT 1"
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+      - name: xtrabackup
+        image: gcr.io/google-samples/xtrabackup:1.0
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - ALL
+        env:
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_username
+        - name: MYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_password
+        ports:
+        - name: xtrabackup
+          containerPort: 3307
+        command:
+        - bash
+        - "-c"
+        - |
+          set -ex
+          cd /var/lib/mysql
+          if [[ -f xtrabackup_slave_info && "x$(<xtrabackup_slave_info)" != "x" ]]; then
+            cat xtrabackup_slave_info | sed -E 's/;$//g' > change_master_to.sql.in
+            rm -f xtrabackup_slave_info xtrabackup_binlog_info
+          elif [[ -f xtrabackup_binlog_info ]]; then
+            [[ `cat xtrabackup_binlog_info` =~ ^(.*?)[[:space:]]+(.*?)$ ]] || exit 1
+            rm -f xtrabackup_binlog_info xtrabackup_slave_info
+            echo "CHANGE MASTER TO MASTER_LOG_FILE='${BASH_REMATCH[1]}',\
+                  MASTER_LOG_POS=${BASH_REMATCH[2]}" > change_master_to.sql.in
+          fi
+
+          if [[ -f change_master_to.sql.in ]]; then
+            echo "Waiting for mysqld to be ready (accepting connections)"
+            until mysql -h 127.0.0.1 -u $(MYSQL_ADMIN_USER) -p$(MYSQL_ADMIN_PASSWORD) -e "SELECT 1"; do sleep 1; done
+
+            echo "Initializing replication from clone position"
+            mysql -h 127.0.0.1 -u $(MYSQL_ADMIN_USER) -p$(MYSQL_ADMIN_PASSWORD) \
+                  -e "$(<change_master_to.sql.in), \
+                          MASTER_HOST='db-0.dbsvc', \
+                          MASTER_USER='$(MYSQL_ADMIN_USER)', \
+                          MASTER_PASSWORD='$(MYSQL_ADMIN_PASSWORD)', \
+                          MASTER_CONNECT_RETRY=10; \
+                        START SLAVE;" || exit 1
+            mv change_master_to.sql.in change_master_to.sql.orig
+          fi
+
+          exec ncat --listen --keep-open --send-only --max-conns=1 3307 -c \
+            "xtrabackup --backup --slave-info --stream=xbstream --host=127.0.0.1 --user=$(MYSQL_ADMIN_USER) --password=$(MYSQL_ADMIN_PASSWORD)"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+          subPath: mysql
+        - name: conf
+          mountPath: /etc/mysql/conf.d
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+      volumes:
+      - name: conf
+        emptyDir: {}
+      - name: config-map
+        configMap:
+          name: mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
+---

@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: client
+  namespace: prod
   labels:
     app: bookmark-app
     tier: frontend
@@ -15,8 +16,23 @@ spec:
       labels:
         tier: frontend
     spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
       containers:
       - name: bookmark-app-client
         image: wajeeh8/bookmark-app:clientlatest
+        imagePullPolicy: Always
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+             - ALL
         command: ["sh", "-c"]
         args: ['sed -i  "s/endpoint/https:\/\/api.bookmark.com/g" build/static/js/main.3ae9d6e4.js && serve -s build']
+---
