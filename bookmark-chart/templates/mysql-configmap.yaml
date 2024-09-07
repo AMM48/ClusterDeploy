@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-mysql
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}-mysql
+    app.kubernetes.io/name: {{ .Release.Name }}-mysql
+data:
+  primary.cnf: |
+    {{ .Values.configFiles.primary | nindent 4 | trim }}
+  replica.cnf: |
+    {{ .Values.configFiles.replica | nindent 4 | trim }}
+---

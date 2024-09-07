@@ -2,14 +2,19 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ .Release.Name }}-ingress
+  namespace: {{ .Values.namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/redirect-entry-point: {{ .Values.ingress.entrypoint }}
+    {{- range $key, $value := .Values.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.className }}
   tls:
-  - hosts: {{- range .Values.ingress.tls.hosts }}
-      - {{.}}
-{{- end }}
-    secretName: tls-secret
+  - hosts:
+     {{- range .Values.ingress.tls.hosts }}
+     - {{ . }}
+     {{- end }}
+    secretName: {{ .Values.ingress.tls.secretName }}
   rules:
   - host: {{ .Values.ingress.host.domain }}
     http:
@@ -18,7 +23,7 @@ spec:
         path: {{ .Values.ingress.host.paths.path }}
         backend:
           service:
-            name: {{ .Release.Name }}-{{ .Values.ingress.host.service.name }}
+            name: {{ .Values.ingress.host.service.name }}
             port:
               number: {{ .Values.ingress.host.service.port }}
   - host: {{ .Values.ingress.apiHost.domain }}
@@ -28,6 +33,7 @@ spec:
         path: {{ .Values.ingress.apiHost.paths.path }}
         backend:
           service:
-            name: {{ .Release.Name }}-{{ .Values.ingress.apiHost.service.name }}
+            name: {{ .Values.ingress.apiHost.service.name }}
             port:
               number: {{ .Values.ingress.apiHost.service.port }}
+---

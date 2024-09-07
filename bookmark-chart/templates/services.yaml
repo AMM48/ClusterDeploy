@@ -2,36 +2,52 @@ apiVersion: v1
 kind: Service
 metadata:
   name: dbsvc
+  namespace: {{ .Values.namespace }}
   labels:
     app: {{ .Release.Name }}-dbsvc
 spec:
   clusterIP: None
   ports:
-    - port: {{ .Values.services.dbsvc.port }}
-      targetPort: {{ .Values.services.dbsvc.targetPort }}
+  - port: 3306
   selector:
     app: {{ .Release.Name }}-db
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-apisvc
+  name: dbsvc-read
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}-dbsvc-read
+    readonly: "true"
 spec:
-  type: NodePort
-  selector:
-    tier: {{ .Release.Name }}-api
   ports:
-    - port: {{ .Values.services.apisvc.port }}
-      targetPort: {{ .Values.services.apisvc.targetPort }}
-      nodePort: {{ .Values.services.apisvc.nodePort }}
+  - port: 3306
+  selector:
+    app: {{ .Release.Name }}-db
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-clientsvc
+  name: apisvc
+  namespace: {{ .Values.namespace }}
 spec:
+  selector:
+    tier: {{ .Release.Name }}-api
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clientsvc
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
   selector:
     tier: {{ .Release.Name }}-frontend
   ports:
-    - port: {{ .Values.services.clientsvc.port }}
-      targetPort: {{ .Values.services.clientsvc.targetPort }}
+    - port: 80
+      targetPort: 3000
+---

@@ -3,21 +3,92 @@
 # Declare variables to be passed into your templates.
 
 replicaCount: 3
-
+namespace: prod
 image:
   appImage: wajeeh8/bookmark-app
   dbImage: wajeeh8/mysqlk8s
-  pullPolicy: IfNotPresent
+  mysql: mysql:5.7
+  xtrabackup: gcr.io/google-samples/xtrabackup:1.0
+  pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   clientTag: "clientlatest"
   apiTag: "serverk8s"
 
 container:
-  command:
-    - "sh"
-    - "-c"
-  args:
-    - 'sed -i "s/endpoint/https:\/\/api.bookmark.com/g" build/static/js/main.3ae9d6e4.js && serve -s build'
+  client:
+    command:
+      - "sh"
+      - "-c"
+    args:
+      - 'sed -i "s/endpoint/https:\/\/api.bookmark.com/g" build/static/js/main.3ae9d6e4.js && serve -s build'
+  initMysql:
+    command:
+      - "bash"
+      - "-c"
+      - |
+        set -ex
+        [[ $HOSTNAME =~ -([0-9]+)$ ]] || exit 1
+        ordinal=${BASH_REMATCH[1]}
+        echo [mysqld] > /mnt/conf.d/server-id.cnf
+        echo server-id=$((100 + $ordinal)) >> /mnt/conf.d/server-id.cnf
+        if [[ $ordinal -eq 0 ]]; then
+          cp /mnt/config-map/primary.cnf /mnt/conf.d/
+        else
+          cp /mnt/config-map/replica.cnf /mnt/conf.d/
+        fi
+  cloneMysql:
+    command:
+      - "bash"
+      - "-c"
+      - |
+        set -ex
+        [[ -d /var/lib/mysql/mysql ]] && exit 0
+        [[ `hostname` =~ -([0-9]+)$ ]] || exit 1
+        ordinal=${BASH_REMATCH[1]}
+        [[ $ordinal -eq 0 ]] && exit 0
+        ncat --recv-only db-$(($ordinal-1)).dbsvc 3307 | xbstream -x -C /var/lib/mysql
+        xtrabackup --prepare --target-dir=/var/lib/mysql
+  db:
+    ports:
+      name: db
+      port: 3306
+  xtrabackup:
+    ports:
+      name: xtrabackup
+      port: 3307
+    command:
+      - bash
+      - "-c"
+      - |
+        set -ex
+        cd /var/lib/mysql
+        if [[ -f xtrabackup_slave_info && "x$(<xtrabackup_slave_info)" != "x" ]]; then
+          cat xtrabackup_slave_info | sed -E 's/;$//g' > change_master_to.sql.in
+          rm -f xtrabackup_slave_info xtrabackup_binlog_info
+        elif [[ -f xtrabackup_binlog_info ]]; then
+          [[ `cat xtrabackup_binlog_info` =~ ^(.*?)[[:space:]]+(.*?)$ ]] || exit 1
+          rm -f xtrabackup_binlog_info xtrabackup_slave_info
+          echo "CHANGE MASTER TO MASTER_LOG_FILE='${BASH_REMATCH[1]}',\
+                MASTER_LOG_POS=${BASH_REMATCH[2]}" > change_master_to.sql.in
+        fi
+
+        if [[ -f change_master_to.sql.in ]]; then
+          echo "Waiting for mysqld to be ready (accepting connections)"
+          until mysql -h 127.0.0.1 -u $(MYSQL_ADMIN_USER) -p$(MYSQL_ADMIN_PASSWORD) -e "SELECT 1"; do sleep 1; done
+
+          echo "Initializing replication from clone position"
+          mysql -h 127.0.0.1 -u $(MYSQL_ADMIN_USER) -p$(MYSQL_ADMIN_PASSWORD) \
+                -e "$(<change_master_to.sql.in), \
+                        MASTER_HOST='db-0.dbsvc', \
+                        MASTER_USER='$(MYSQL_ADMIN_USER)', \
+                        MASTER_PASSWORD='$(MYSQL_ADMIN_PASSWORD)', \
+                        MASTER_CONNECT_RETRY=10; \
+                        START SLAVE;" || exit 1
+          mv change_master_to.sql.in change_master_to.sql.orig
+        fi
+
+        exec ncat --listen --keep-open --send-only --max-conns=1 3307 -c \
+          "xtrabackup --backup --slave-info --stream=xbstream --host=127.0.0.1 --user=$(MYSQL_ADMIN_USER) --password=$(MYSQL_ADMIN_PASSWORD)"
 
 pv:
   capacity:
@@ -34,20 +105,14 @@ pvc:
   accessModes: ReadWriteOnce
   storage: 2Gi
 
-volume:
-  name: db-pv
-  persistentVolumeClaim:
-    claimName: db-pvc
-
 services:
   dbsvc:
+    clusterIP: None
     port: 3306
     targetPort: 3306
   apisvc:
     port: 80
     targetPort: 80
-    nodePort: 30007
-    type: NodePort
   clientsvc:
     port: 80
     targetPort: 3000
@@ -74,24 +139,70 @@ service:
 podAnnotations: {}
 podLabels: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+podSecurityContext:
+  web:
+    user: 1000
+    group: 1000
+    fsGroup: 1000
+    runAsRoot: true
+  api:
+    user: 33
+    group: 33
+    fsGroup: 33
+    runAsRoot: true
+  db:
+    user: 999
+    group: 999
+    fsGroup: 999
+    runAsRoot: true
+securityContext:
+  web:
+    user: 1000
+    group: 1000
+    runAsRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - All
+  api:
+    user: 33
+    group: 33
+    runAsRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - All
+  db:
+    user: 999
+    group: 999
+    runAsRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - All
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+configFiles:
+  primary: |
+    [mysqld]
+    log-bin
+  replica: |
+    [mysqld]
+    super-read-only
 
+networkPolicy:
+  db:
+    policyType:
+    - Ingress
+    ports:
+    - protocol: TCP
+      port: 3306
+    - protocol: TCP
+      port: 3307
 ingress:
   enabled: false
-  className: ""
-  annotations: {}
-  entrypoint: websecure
-    # kubernetes.io/ingress.class: nginx
-    # kubernetes.io/tls-acme: "true"
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
   tls:
     hosts:
      - bookmark.com
@@ -113,30 +224,16 @@ ingress:
     service:
       name: apisvc
       port: 80
-  #  - secretName: chart-example-tls
-  #    hosts:
-  #      - chart-example.local
 
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
-
+resources:
+  db:
+    cpu: 500m
+    memory: 1Gi
+  xtrabackup:
+    cpu: 100m
+    memory: 100Mi
 livenessProbe:
-  httpGet:
-    path: /
-    port: http
 readinessProbe:
-  httpGet:
-    path: /
-    port: http
 
 autoscaling:
   enabled: false
@@ -146,17 +243,45 @@ autoscaling:
   # targetMemoryUtilizationPercentage: 80
 
 # Additional volumes on the output Deployment definition.
-volumes: []
-# - name: foo
-#   secret:
-#     secretName: mysecret
-#     optional: false
-
+volumes:
+  - name: conf
+    emptyDir: true
+  - name: config-map
+    configMap:
+      name: mysql
 # Additional volumeMounts on the output Deployment definition.
-volumeMounts: []
-# - name: foo
-#   mountPath: "/etc/foo"
-#   readOnly: true
+volumeMounts:
+  initMysql:
+  - name: conf
+    mountPath: /mnt/conf.d
+  - name: config-map
+    mountPath: /mnt/config-map
+  cloneMysql:
+  - name: data
+    mountPath: /var/lib/mysql
+    subPath: mysql
+  - name: conf
+    mountPath: /etc/mysql/conf.d
+  db:
+  - name: data
+    mountPath: /var/lib/mysql
+    subPath: mysql
+  - name: conf
+    mountPath: /etc/mysql/conf.d
+  xtrabackup:
+  - name: data
+    mountPath: /var/lib/mysql
+    subPath: mysql
+  - name: conf
+    mountPath: /etc/mysql/conf.d
+
+volumeClaimTemplates:
+  name: data
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
 
 nodeSelector: {}
 

@@ -1,0 +1,189 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: {{ .Values.namespace }}
+  labels:
+    tier: {{ .Release.Name }}-db
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-db
+  serviceName: dbsvc
+  replicas: {{ .Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-db
+    spec:
+      securityContext:
+        runAsUser: {{ .Values.podSecurityContext.db.user }}
+        runAsGroup: {{ .Values.podSecurityContext.db.group }}
+        fsGroup: {{ .Values.podSecurityContext.db.fsGroup }}
+        runAsNonRoot: {{ .Values.podSecurityContext.db.runAsNonRoot }}
+      initContainers:
+      - name: init-mysql
+        image: {{ .Values.image.mysql }}
+        securityContext:
+          runAsUser: {{ .Values.securityContext.db.user }}
+          runAsGroup: {{ .Values.securityContext.db.group }}
+          runAsNonRoot: {{ .Values.securityContext.db.runAsNonRoot }}
+          allowPrivilegeEscalation: {{ .Values.securityContext.db.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+              {{- range .Values.securityContext.db.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: root_password
+        command: {{ .Values.container.initMysql.command | toJson }}
+        volumeMounts:
+        {{- range .Values.volumeMounts.initMysql }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+        {{- end }}
+      - name: clone-mysql
+        image: {{ .Values.image.xtrabackup }}
+        securityContext:
+          runAsUser: {{ .Values.securityContext.db.user }}
+          runAsGroup: {{ .Values.securityContext.db.group }}
+          runAsNonRoot: {{ .Values.securityContext.db.runAsNonRoot }}
+          allowPrivilegeEscalation: {{ .Values.securityContext.db.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+              {{- range .Values.securityContext.db.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        command: {{ .Values.container.cloneMysql.command | toJson }}
+        volumeMounts:
+        {{- range .Values.volumeMounts.cloneMysql }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+          {{- if .subPath }}
+          subPath: {{ .subPath }}
+          {{- end }}
+        {{- end }}
+      containers:
+      - name: db
+        image: {{ .Values.image.dbImage }}
+        securityContext:
+          runAsUser: {{ .Values.securityContext.db.user }}
+          runAsGroup: {{ .Values.securityContext.db.group }}
+          runAsNonRoot: {{ .Values.securityContext.db.runAsNonRoot }}
+          allowPrivilegeEscalation: {{ .Values.securityContext.db.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+              {{- range .Values.securityContext.db.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        env:
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_username
+        - name: MYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_password
+        ports:
+        - name: {{ .Values.container.db.ports.name }}
+          containerPort: {{ .Values.container.db.ports.port }}
+        volumeMounts:
+        {{- range .Values.volumeMounts.db }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+          {{- if .subPath }}
+          subPath: {{ .subPath }}
+          {{- end }}
+        {{- end }}
+        resources:
+          requests:
+            cpu: {{ .Values.resources.db.cpu }}
+            memory: {{ .Values.resources.db.memory }}
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - "-c"
+            - |
+              mysqladmin ping -u ${MYSQL_ADMIN_USER} -p${MYSQL_ADMIN_PASSWORD}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - bash
+            - "-c"
+            - |
+              mysql -h 127.0.0.1 -u ${MYSQL_ADMIN_USER} -p${MYSQL_ADMIN_PASSWORD} -e "SELECT 1"
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+      - name: xtrabackup
+        image: {{ .Values.image.xtrabackup }}
+        securityContext:
+          runAsUser: {{ .Values.securityContext.db.user }}
+          runAsGroup: {{ .Values.securityContext.db.group }}
+          runAsNonRoot: {{ .Values.securityContext.db.runAsNonRoot }}
+          allowPrivilegeEscalation: {{ .Values.securityContext.db.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+              {{- range .Values.securityContext.db.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        env:
+        - name: MYSQL_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_username
+        - name: MYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: admin_password
+        ports:
+        - name: {{ .Values.container.xtrabackup.ports.name }}
+          containerPort: {{ .Values.container.xtrabackup.ports.port }}
+        command: {{ .Values.container.xtrabackup.command | toJson }}
+        volumeMounts:
+        {{- range .Values.volumeMounts.xtrabackup }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+          {{- if .subPath }}
+          subPath: {{ .subPath }}
+          {{- end }}
+        {{- end }}
+        resources:
+          requests:
+            cpu: {{ .Values.resources.xtrabackup.cpu }}
+            memory: {{ .Values.resources.xtrabackup.memory }}
+      volumes:
+      {{- $releaseName := .Release.Name }}
+      {{- range .Values.volumes }}
+      - name: {{ .name }}
+        {{- if .emptyDir }}
+        emptyDir: {}
+        {{- end }}
+        {{- if .configMap }}
+        configMap:
+          name: {{ $releaseName }}-{{ .configMap.name }}
+        {{- end }}
+      {{- end }}
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ .Values.volumeClaimTemplates.name }}
+    spec:
+      accessModes:
+      {{ .Values.volumeClaimTemplates.accessModes | toYaml }}
+      resources:
+        requests:
+          storage: {{ .Values.volumeClaimTemplates.resources.requests.storage }}
+---

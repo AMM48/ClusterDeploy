@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-client
+  namespace: {{ .Values.namespace }}
   labels:
     app: {{ .Release.Name }}-bookmark-app
     tier: {{ .Release.Name }}-frontend
@@ -15,8 +16,25 @@ spec:
       labels:
         tier: {{ .Release.Name }}-frontend
     spec:
+      securityContext:
+        runAsUser: {{ .Values.podSecurityContext.web.user }}
+        runAsGroup: {{ .Values.podSecurityContext.web.group }}
+        fsGroup: {{ .Values.podSecurityContext.web.fsGroup }}
+        runAsNonRoot: {{ .Values.podSecurityContext.web.runAsRoot }}
       containers:
       - name: bookmark-app-client
         image: {{ .Values.image.appImage }}:{{ .Values.image.clientTag  }}
-        command: {{ .Values.container.command | toJson }}
-        args: {{ .Values.container.args | toJson }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          runAsUser: {{ .Values.securityContext.web.user }}
+          runAsGroup: {{ .Values.securityContext.web.group }}
+          runAsNonRoot: {{ .Values.securityContext.web.runAsRoot }}
+          allowPrivilegeEscalation: {{ .Values.securityContext.web.allowPrivilegeEscalation }}
+          capabilities:
+            drop:
+              {{- range .Values.securityContext.web.capabilities.drop }}
+              - {{ . }}
+              {{- end }}
+        command: {{ .Values.container.client.command | toJson }}
+        args: {{ .Values.container.client.args | toJson }}
+---
