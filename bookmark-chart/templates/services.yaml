@@ -6,9 +6,9 @@ metadata:
   labels:
     app: {{ .Release.Name }}-dbsvc
 spec:
-  clusterIP: None
+  clusterIP: {{ .Values.services.dbsvc.clusterIP }}
   ports:
-  - port: 3306
+  - port: {{ .Values.services.dbsvc.port }}
   selector:
     app: {{ .Release.Name }}-db
 ---
@@ -22,7 +22,7 @@ metadata:
     readonly: "true"
 spec:
   ports:
-  - port: 3306
+  - port: {{ .Values.services.dbsvc.port }}
   selector:
     app: {{ .Release.Name }}-db
 ---
@@ -35,8 +35,8 @@ spec:
   selector:
     tier: {{ .Release.Name }}-api
   ports:
-    - port: 80
-      targetPort: 80
+    - port: {{ .Values.services.apisvc.port }}
+      targetPort: {{ .Values.services.apisvc.targetPort }}
 ---
 apiVersion: v1
 kind: Service
@@ -44,10 +44,9 @@ metadata:
   name: clientsvc
   namespace: {{ .Values.namespace }}
 spec:
-  type: ClusterIP
   selector:
     tier: {{ .Release.Name }}-frontend
   ports:
-    - port: 80
-      targetPort: 3000
+    - port: {{ .Values.services.clientsvc.port }}
+      targetPort: {{ .Values.services.clientsvc.targetPort }}
 ---

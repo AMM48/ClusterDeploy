@@ -112,7 +112,7 @@ services:
     targetPort: 3306
   apisvc:
     port: 80
-    targetPort: 80
+    targetPort: 8080
   clientsvc:
     port: 80
     targetPort: 3000
